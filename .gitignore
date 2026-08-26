@@ -1,0 +1,8 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# SQLite database — each clone creates its own
+tasks.db
