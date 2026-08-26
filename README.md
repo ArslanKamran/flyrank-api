@@ -3,8 +3,13 @@
 This is a small CRUD API that manages a to-do list in memory. You can create, read, update, and delete tasks. Built with Python and FastAPI.
 
 ## How to Run
-To install dependencies and start the server on localhost, run:
-`pip install fastapi uvicorn pydantic && uvicorn main:app`
+To set up an isolated virtual environment, install the dependencies, and start the server on localhost, run these commands in order:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install fastapi uvicorn pydantic
+uvicorn main:app
 
 ## Endpoints
 
