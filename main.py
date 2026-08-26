@@ -34,3 +34,17 @@ def create_task(task: Task):
     new_task = {"id": len(tasks) + 1, "title": task.title, "done": task.done}
     tasks.append(new_task)
     return new_task
+
+@app.put("/tasks/{task_id}")
+def update_task(task_id: int, task: Task):
+    existing = next((t for t in tasks if t["id"] == task_id), None)
+    if not existing: raise HTTPException(status_code=404, detail="Task not found")
+    existing.update({"title": task.title, "done": task.done})
+    return existing
+
+@app.delete("/tasks/{task_id}", status_code=204)
+def delete_task(task_id: int):
+    global tasks
+    if not any(t["id"] == task_id for t in tasks): raise HTTPException(status_code=404, detail="Task not found")
+    tasks = [t for t in tasks if t["id"] != task_id]
+    return
