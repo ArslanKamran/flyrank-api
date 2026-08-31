@@ -6,3 +6,6 @@ __pycache__/
 
 # SQLite database — each clone creates its own
 tasks.db
+
+# Secrets — NEVER commit this file
+.env
