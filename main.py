@@ -1,45 +1,49 @@
-import sqlite3
+import os
+import psycopg
+from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load the DATABASE_URL from the .env file
+load_dotenv()
 
 app = FastAPI()
 
+DATABASE_URL = os.environ["DATABASE_URL"]
+
 
 # ──────────────────────────────────────────────
-# Stage 0 · Database setup
+# Stage 1 · Database setup
 # ──────────────────────────────────────────────
 
 def get_db():
-    """Open a connection to tasks.db with row_factory so rows come back as dicts."""
-    conn = sqlite3.connect("tasks.db")
-    conn.row_factory = sqlite3.Row
-    return conn
+    """
+    Open a connection to Postgres.
+    row_factory=dict_row makes every row come back as a dict
+    so we can return it directly from our endpoints.
+    """
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def setup_database():
     """
-    Create the tasks table if it doesn't exist yet,
-    then seed 3 example tasks — but ONLY if the table is empty.
-    This makes sure the seed never duplicates on restart.
+    Create the tasks table if it doesn't exist yet.
+    Seed 3 example tasks — but ONLY if the table is empty.
+    This means the seed never duplicates on restart.
     """
     conn = get_db()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tasks (
-            id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            id    SERIAL  PRIMARY KEY,
             title TEXT    NOT NULL,
-            done  INTEGER NOT NULL DEFAULT 0
+            done  BOOLEAN NOT NULL DEFAULT FALSE
         )
     """)
-    count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()["count"]
     if count == 0:
-        conn.executemany(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)",
-            [
-                ("Buy milk",     0),
-                ("Study Python", 1),
-                ("Sleep",        0),
-            ],
-        )
+        for title, done in [("Buy milk", False), ("Study Python", True), ("Sleep", False)]:
+            conn.execute("INSERT INTO tasks (title, done) VALUES (%s, %s)", (title, done))
     conn.commit()
     conn.close()
 
@@ -49,7 +53,7 @@ setup_database()
 
 
 # ──────────────────────────────────────────────
-# Pydantic model (same as Assignment 1)
+# Pydantic model (same shape as A1 and A2)
 # ──────────────────────────────────────────────
 
 class Task(BaseModel):
@@ -63,7 +67,7 @@ class Task(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"name": "Task API", "version": "2.0", "endpoints": ["/tasks"]}
+    return {"name": "Task API", "version": "3.0", "endpoints": ["/tasks"]}
 
 
 @app.get("/health")
@@ -72,7 +76,7 @@ def health_check():
 
 
 # ──────────────────────────────────────────────
-# Stage 1 · Read from the database
+# Stage 2 · Read from Postgres
 # ──────────────────────────────────────────────
 
 @app.get("/tasks")
@@ -80,23 +84,23 @@ def get_tasks():
     conn = get_db()
     rows = conn.execute("SELECT * FROM tasks").fetchall()
     conn.close()
-    return [dict(row) for row in rows]
+    return rows
 
 
 @app.get("/tasks/{task_id}")
 def get_task(task_id: int):
     conn = get_db()
     row = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        "SELECT * FROM tasks WHERE id = %s", (task_id,)
     ).fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Task not found")
-    return dict(row)
+    return row
 
 
 # ──────────────────────────────────────────────
-# Stage 2 · Create new tasks (INSERT)
+# Stage 3 · Create, update, delete on Postgres
 # ──────────────────────────────────────────────
 
 @app.post("/tasks", status_code=201)
@@ -104,22 +108,14 @@ def create_task(task: Task):
     if not task.title.strip():
         raise HTTPException(status_code=400, detail="Title missing")
     conn = get_db()
-    cursor = conn.execute(
-        "INSERT INTO tasks (title, done) VALUES (?, ?)",
-        (task.title, int(task.done)),
-    )
-    conn.commit()
-    new_id = cursor.lastrowid
-    new_task = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?", (new_id,)
+    row = conn.execute(
+        "INSERT INTO tasks (title, done) VALUES (%s, %s) RETURNING *",
+        (task.title, task.done),
     ).fetchone()
+    conn.commit()
     conn.close()
-    return dict(new_task)
+    return row
 
-
-# ──────────────────────────────────────────────
-# Stage 3 · Update and delete (UPDATE / DELETE)
-# ──────────────────────────────────────────────
 
 @app.put("/tasks/{task_id}")
 def update_task(task_id: int, task: Task):
@@ -127,32 +123,29 @@ def update_task(task_id: int, task: Task):
         raise HTTPException(status_code=400, detail="Title missing")
     conn = get_db()
     existing = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        "SELECT id FROM tasks WHERE id = %s", (task_id,)
     ).fetchone()
     if not existing:
         conn.close()
         raise HTTPException(status_code=404, detail="Task not found")
-    conn.execute(
-        "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
-        (task.title, int(task.done), task_id),
-    )
-    conn.commit()
-    updated = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?", (task_id,)
+    row = conn.execute(
+        "UPDATE tasks SET title = %s, done = %s WHERE id = %s RETURNING *",
+        (task.title, task.done, task_id),
     ).fetchone()
+    conn.commit()
     conn.close()
-    return dict(updated)
+    return row
 
 
 @app.delete("/tasks/{task_id}", status_code=204)
 def delete_task(task_id: int):
     conn = get_db()
     existing = conn.execute(
-        "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        "SELECT id FROM tasks WHERE id = %s", (task_id,)
     ).fetchone()
     if not existing:
         conn.close()
         raise HTTPException(status_code=404, detail="Task not found")
-    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
     conn.commit()
     conn.close()
