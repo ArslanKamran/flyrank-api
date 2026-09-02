@@ -1,123 +1,139 @@
-# FlyRank Task API — v2 (SQLite)
+# FlyRank Task API — v3 (Docker + Postgres)
 
-A CRUD API that manages a to-do list, now backed by a real **SQLite database**.  
-Built with Python and FastAPI. Data survives server restarts.
+A CRUD API that manages a to-do list, backed by a **PostgreSQL** database running in **Docker**.
+Built with Python and FastAPI. Start the entire stack — app and database — with one command.
 
----
+This is the third storage swap in the same repo:
+> Memory (A1) → SQLite file (A2) → Containerized Postgres (A3 — this one)
 
-## Why SQLite?
-
-SQLite was chosen because it is a **single-file, zero-configuration database** —
-the entire database lives in one file (`tasks.db`) on disk with no separate server
-to install or run. That single change — swapping the in-memory list for a file on
-disk — is what makes the data persist after every restart. It is the right tool for
-a project of this size: fast, free, and needs nothing extra.
+The API on top never changed. Only the storage engine underneath.
 
 ---
 
-## How to Run
-
-Copy and run these commands in order:
+## One command to run everything
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install fastapi uvicorn pydantic
-uvicorn main:app --reload
+cp .env.example .env
+docker compose up
 ```
 
-The server starts at **http://localhost:8000**.  
-`tasks.db` is created automatically on the first run — no manual setup needed.  
-Three example tasks are seeded automatically, but only once (restarting will not duplicate them).
+That's it. Docker builds the app image, starts the Postgres database, seeds 3 example tasks, and your API is live at **http://localhost:8000**.
+
+No manual database setup. No installing Postgres. Works the same on any machine.
+
+---
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+| Variable       | What it does                              | Example                                        |
+|----------------|-------------------------------------------|------------------------------------------------|
+| `DATABASE_URL` | Full Postgres connection string           | `postgresql://postgres:dev@localhost:5432/tasks` |
+
+> ⚠️ Never commit `.env` — it's git-ignored. Only `.env.example` goes to GitHub.
 
 ---
 
 ## Endpoints
 
-| CRUD Operation | HTTP Method | Endpoint           | Description             |
-|----------------|-------------|--------------------|-------------------------|
-| Read           | GET         | `/`                | API information         |
-| Read           | GET         | `/health`          | Server health check     |
-| Read           | GET         | `/tasks`           | List all tasks          |
-| Create         | POST        | `/tasks`           | Add a new task          |
-| Read           | GET         | `/tasks/{task_id}` | Get a specific task     |
-| Update         | PUT         | `/tasks/{task_id}` | Update a specific task  |
-| Delete         | DELETE      | `/tasks/{task_id}` | Remove a specific task  |
+| Method | Endpoint           | Description              | Success Code |
+|--------|--------------------|--------------------------|--------------|
+| GET    | `/`                | API info                 | 200          |
+| GET    | `/health`          | Health check             | 200          |
+| GET    | `/tasks`           | List all tasks           | 200          |
+| POST   | `/tasks`           | Create a task            | 201          |
+| GET    | `/tasks/{id}`      | Get one task             | 200          |
+| PUT    | `/tasks/{id}`      | Update a task            | 200          |
+| DELETE | `/tasks/{id}`      | Delete a task            | 204          |
+
+### Status codes
+
+| Code | Meaning       | When                          |
+|------|---------------|-------------------------------|
+| 200  | OK            | GET / PUT success             |
+| 201  | Created       | POST success                  |
+| 204  | No Content    | DELETE success                |
+| 400  | Bad Request   | Missing or empty title        |
+| 404  | Not Found     | Task ID does not exist        |
 
 ---
 
-## Status Codes
+## Example curl output
 
-| Code | Meaning         | When                              |
-|------|-----------------|-----------------------------------|
-| 200  | OK              | GET / PUT success                 |
-| 201  | Created         | POST success                      |
-| 204  | No Content      | DELETE success                    |
-| 400  | Bad Request     | Missing or empty title            |
-| 404  | Not Found       | Task ID does not exist            |
-
----
-
-## Database
-
-The database file is `tasks.db` and is created automatically when the server first starts.  
-It is git-ignored so that each fresh clone starts with its own clean database.
-
-### Database location
 ```
-flyrank-api/
-└── tasks.db   ← created automatically, do not commit this file
-```
+$ curl -i -X POST http://localhost:8000/tasks \
+    -H "Content-Type: application/json" \
+    -d '{"title": "Walk the dog", "done": false}'
 
-### Schema
-```sql
-CREATE TABLE tasks (
-    id    INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT    NOT NULL,
-    done  INTEGER NOT NULL DEFAULT 0
-);
+HTTP/1.1 201 Created
+content-type: application/json
+
+{"id":4,"title":"Walk the dog","done":false}
 ```
 
 ---
 
-## DB Browser Screenshot
+## Database screenshot
 
-The tasks table open in DB Browser for SQLite, showing the id, title, and done columns:
+The `tasks` table as seen from `psql` inside the Docker container:
 
-![tasks.db open in DB Browser](db-screenshot.png)
-
----
-
-## Example SQL Query (Stage 4)
-
-This query was run directly in DB Browser to mark every task as completed:
-
-```sql
-UPDATE tasks SET done = 1;
-```
-
-After running this query and clicking "Write Changes", hitting `GET /tasks` from the API
-immediately returned all tasks with `"done": 1` — no server restart needed.
-This proved there is **one source of truth**: the API and DB Browser both read the exact same file.
+![tasks table in psql](psql-screenshot.png)
 
 ---
 
-## Example curl Commands
+## How to run (step by step)
 
 ```bash
-# List all tasks
-curl http://localhost:8000/tasks
+# 1. Clone the repo
+git clone https://github.com/ArslanKamran/flyrank-api.git
+cd flyrank-api
 
-# Create a task
-curl -X POST http://localhost:8000/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Buy milk", "done": false}'
+# 2. Copy the env template
+cp .env.example .env
 
-# Update a task
-curl -X PUT http://localhost:8000/tasks/1 \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Buy milk", "done": true}'
-
-# Delete a task
-curl -X DELETE http://localhost:8000/tasks/1
+# 3. Start everything
+docker compose up
 ```
+
+The database is created automatically. Three example tasks are seeded on the first run only.
+
+To stop:
+```bash
+docker compose down
+```
+
+Your data persists across restarts because of the Docker **volume** (`taskdata`). Only `docker compose down -v` would delete it.
+
+---
+
+## Architecture
+
+```
+┌──────────────────┐       ┌─────────────────────┐
+│   FastAPI app    │──────▶│   PostgreSQL (db)    │
+│   (api service)  │       │   (db service)       │
+│   port 8000      │       │   port 5432          │
+└──────────────────┘       └─────────────────────┘
+         │                          │
+         └──── Docker network ──────┘
+                    │
+              taskdata volume
+           (data lives here on disk)
+```
+
+Inside Docker Compose, the app reaches the database at the hostname `db` (the service name), not `localhost`.
+
+---
+
+## Storage history
+
+| Assignment | Where tasks live        | What runs it          |
+|------------|-------------------------|-----------------------|
+| A1         | A list in memory        | Your Python process   |
+| A2         | `tasks.db` file         | SQLite on disk        |
+| A3 (this)  | Rows in Postgres        | A Docker container    |
