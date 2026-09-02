@@ -1,0 +1,26 @@
+services:
+
+  # Your FastAPI app
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Inside Docker, the database is reachable by the service name "db"
+      # (not "localhost" — that only works on your Mac directly)
+      DATABASE_URL: postgresql://postgres:dev@db:5432/tasks
+    depends_on:
+      - db
+
+  # The Postgres database
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: tasks
+    volumes:
+      # Named volume — data survives even after "docker compose down"
+      - taskdata:/var/lib/postgresql/data
+
+volumes:
+  taskdata:
